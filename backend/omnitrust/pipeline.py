@@ -124,7 +124,8 @@ class OmniTrustPipeline:
         # ------------------------------------------------------------------
         t0 = time.perf_counter()
         doc_texts = [d.get("text", "") for d in all_docs]
-        independence_scores = self.independence_scorer.score(doc_texts)
+        doc_sources = [d.get("source", "") for d in all_docs]
+        independence_scores = self.independence_scorer.score(doc_texts, doc_sources)
         metrics["step4_independence_scoring_s"] = round(time.perf_counter() - t0, 3)
 
         # ------------------------------------------------------------------
@@ -222,9 +223,13 @@ class OmniTrustPipeline:
         # Step 9 – Synthesise final answer
         # ------------------------------------------------------------------
         t0 = time.perf_counter()
+        supported_claims = [c for c in checked_raw if c.get("status", "").lower() == "supported"]
+        unsupported_claims = [c for c in checked_raw if c.get("status", "").lower() != "supported"]
+        
         final_answer = self.synthesizer.synthesize(
             question=question,
-            verified_claims=checked_raw,
+            supported_claims=supported_claims,
+            unsupported_claims=unsupported_claims,
             evidence=evidence_for_critic,
             bus=self.bus,
         )

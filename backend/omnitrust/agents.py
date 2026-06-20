@@ -192,6 +192,11 @@ class PlannerAgent(BaseAgent):
             "Given a user question, produce 3 to 5 diverse, optimised search queries that "
             "together will cover the key facets of the question. Each query should target "
             "different aspects, perspectives, or related sub-topics.\n\n"
+            "CRITICAL: Keep your queries tightly focused on the core subject of the question. "
+            "Do NOT expand queries to general categories, unrelated topics, or tangential domains. "
+            "For example, if the question is about 'coffee', every query must contain the word 'coffee' "
+            "or direct terms like 'caffeine'; do NOT generate queries about 'stimulants', 'e-cigarettes', "
+            "or unrelated health issues/substances.\n\n"
             "Return ONLY a JSON array of strings, e.g.:\n"
             '["query one", "query two", "query three"]'
         )
@@ -243,6 +248,10 @@ class StrategistAgent(BaseAgent):
             "2. Return a JSON object with exactly two keys:\n"
             '   - "decision": one of "approve", "modify", "expand"\n'
             '   - "final_queries": the definitive list of search queries (3-6 strings)\n\n'
+            "CRITICAL: Ensure that all final_queries are tightly locked to the core topic "
+            "of the question. Reject or modify queries that expand to general categories, unrelated subjects, "
+            "or unrelated diagnostics/substances (e.g., do not expand a coffee query to e-cigarettes or colonoscopy). "
+            "Every query should contain the main subject name explicitly.\n\n"
             "Return ONLY the JSON object."
         )
         prompt = (
@@ -363,7 +372,8 @@ class SynthesizerAgent(BaseAgent):
     def synthesize(
         self,
         question: str,
-        verified_claims: list[dict[str, Any]],
+        supported_claims: list[dict[str, Any]],
+        unsupported_claims: list[dict[str, Any]],
         evidence: list[dict[str, str]],
         bus: MessageBus,
     ) -> str:
@@ -371,26 +381,39 @@ class SynthesizerAgent(BaseAgent):
             f"[DOC {e.get('id', idx)}] {e.get('title', '')}\n{e.get('text', '')[:600]}"
             for idx, e in enumerate(evidence[:3])
         )
-        claims_block = "\n".join(
-            f"- [{c.get('status', 'uncertain').upper()}] {c.get('claim', '')}"
-            for c in verified_claims
-        )
+        supported_block = "\n".join(
+            f"- {c.get('claim', '')} (Source: [DOC {c.get('evidence_doc_id', 'unknown')}])"
+            for c in supported_claims
+        ) if supported_claims else "None"
+
+        unsupported_block = "\n".join(
+            f"- {c.get('claim', '')}"
+            for c in unsupported_claims
+        ) if unsupported_claims else "None"
 
         system = (
             "You are an expert research synthesiser. Using ONLY the provided evidence "
             "documents and the verified claims below, write a comprehensive, well-structured "
             "answer to the user's question.\n\n"
-            "Guidelines:\n"
+            "TEMPORAL RELEVANCE / CHRONOLOGY:\n"
+            "• You MUST prioritize the most chronologically recent facts found in the evidence (look at dates, years, and references like 'today', 'now', or 'currently').\n"
+            "• If there is a change or transition over time (e.g., who is the UK Prime Minister today), you MUST present the current/latest status as the fact and clearly state that previous statuses are outdated.\n"
+            "• Rely STRICTLY on the retrieved evidence documents. Do NOT allow your static, pre-trained parametric knowledge (or outdated external knowledge) to override newer, explicit dates/facts in the retrieved documents.\n\n"
+            "CLAIM FACT-CHECKING RULES:\n"
+            "• Under 'Supported Claims', you are given claims that have been verified against the evidence. You may assert these as true.\n"
+            "• Under 'Unsupported/Refuted Claims', you are given claims that were checked and found to be UNSUPPORTED or REFUTED. You MUST NOT assert them as facts. If these claims are central to the user's query, you must explicitly state that the evidence does NOT support them.\n\n"
+            "GENERAL GUIDELINES:\n"
             "• Cite specific documents by their [DOC ...] identifier.\n"
             "• Clearly state where evidence is strong, uncertain, or missing.\n"
             "• Use headings, bullet points, and logical flow.\n"
-            "• Do NOT invent information beyond what the evidence supports.\n"
+            "• Do NOT invent or assume information beyond what the evidence supports.\n"
             "• If conflicting evidence exists, present both sides.\n"
         )
         prompt = (
             f"Question:\n{question}\n\n"
-            f"Verified claims:\n{claims_block}\n\n"
-            f"Evidence:\n{evidence_block}"
+            f"Supported Claims (Allowed to use as facts):\n{supported_block}\n\n"
+            f"Unsupported/Refuted Claims (Forbidden to use as facts):\n{unsupported_block}\n\n"
+            f"Evidence Documents:\n{evidence_block}"
         )
         answer = self.generate(prompt, system)
 

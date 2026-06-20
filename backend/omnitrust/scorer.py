@@ -84,10 +84,34 @@ def _cosine_sim(a: dict[str, float], b: dict[str, float]) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _extract_authority(source: str) -> str:
+    """Extract a normalized authority or domain name from a source string or URL."""
+    if not source:
+        return "unknown"
+    source = source.strip()
+    if source.startswith(("http://", "https://")):
+        from urllib.parse import urlparse
+        try:
+            netloc = urlparse(source).netloc.lower()
+            if ":" in netloc:
+                netloc = netloc.split(":")[0]
+            parts = netloc.split(".")
+            if len(parts) >= 2:
+                # E.g., en.wikipedia.org -> parts = ['en', 'wikipedia', 'org']
+                # If the second to last is a short SLD/TLD structure, keep three parts (e.g. co.uk, gov.uk)
+                if len(parts) >= 3 and len(parts[-2]) <= 3 and parts[-2] in ("co", "org", "gov", "net", "com", "edu", "ac"):
+                    return ".".join(parts[-3:])
+                return ".".join(parts[-2:])
+            return netloc
+        except Exception:
+            return source.lower()
+    return source.lower()
+
+
 class IndependenceScorer:
     """Clusters near-duplicate documents and assigns independence scores.
 
-    Independence = 1 / cluster_size  (unique doc → 1.0, duplicate → < 1.0).
+    Independence = (1 / cluster_size) * (1 / count_of_docs_from_same_authority)
     Similarity threshold defaults to ``INDEPENDENCE_SIMILARITY_THRESHOLD``
     from config (0.85).
     """
@@ -95,8 +119,10 @@ class IndependenceScorer:
     def __init__(self, threshold: float = INDEPENDENCE_SIMILARITY_THRESHOLD) -> None:
         self.threshold = threshold
 
-    def score(self, documents: list[str]) -> list[dict[str, Any]]:
-        """Score a list of document texts.
+    def score(
+        self, documents: list[str], sources: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Score a list of document texts and evaluate authority-based independence.
 
         Returns a list of dicts parallel to *documents*, each containing:
         ``doc_id``, ``independence_score``, ``cluster_id``, ``cluster_size``,
@@ -137,14 +163,28 @@ class IndependenceScorer:
         # Compute cluster sizes
         cluster_sizes: dict[int, int] = Counter(cluster_ids)
 
+        # Publisher/Authority-based independence penalization
+        authorities = [_extract_authority(src) for src in (sources or [])]
+        authority_counts = Counter(authorities)
+
         results: list[dict[str, Any]] = []
         for idx in range(n):
             cid = cluster_ids[idx]
             csize = cluster_sizes[cid]
+            base_score = 1.0 / csize
+
+            # Penalize if multiple documents come from the same authority/publisher
+            if sources and idx < len(authorities) and authorities[idx] != "unknown":
+                auth = authorities[idx]
+                auth_count = authority_counts[auth]
+                ind_score = base_score * (1.0 / auth_count)
+            else:
+                ind_score = base_score
+
             results.append(
                 {
                     "doc_id": idx,
-                    "independence_score": round(1.0 / csize, 4),
+                    "independence_score": round(ind_score, 4),
                     "cluster_id": cid,
                     "cluster_size": csize,
                     "is_duplicate": csize > 1,
@@ -184,6 +224,10 @@ class UtilityScorer:
         # Question vector (for relevance-boosted novelty)
         q_tokens = _tokenize(question)
         q_vec = _tfidf_vector(_term_freq(q_tokens), idf)
+        
+        # Calculate sum of IDFs for query terms for coverage calculation
+        q_set = set(q_tokens)
+        q_idf_sum = sum(idf.get(t, 1.0) for t in q_set) or 1.0
 
         results: list[dict[str, Any]] = []
         for idx in range(n):
@@ -200,6 +244,11 @@ class UtilityScorer:
             q_relevance = _cosine_sim(vectors[idx], q_vec)
             novelty = min(1.0, novelty * 0.7 + q_relevance * 0.3)
 
+            # Calculate query coverage (IDF-weighted token overlap)
+            doc_tokens_set = set(all_tokens[idx])
+            overlap_tokens = q_set & doc_tokens_set
+            q_coverage = sum(idf.get(t, 1.0) for t in overlap_tokens) / q_idf_sum
+
             # --- Contradiction ---
             doc_lower = documents[idx].lower()
             doc_word_count = len(doc_lower.split()) or 1
@@ -211,9 +260,16 @@ class UtilityScorer:
             length = len(documents[idx])
             length_bonus = min(1.0, length / 2000.0)
 
-            # --- Composite utility ---
+            # --- Composite utility & Query-Coverage Gate ---
             utility = 0.5 * novelty + 0.3 * (1.0 - contradiction) + 0.2 * length_bonus
-            utility = round(max(0.0, min(1.0, utility)), 4)
+            
+            # Gating: if document has very low query coverage (under 20%), it is irrelevant noise
+            if q_coverage < 0.20:
+                utility = 0.0
+                is_useful = False
+            else:
+                utility = round(max(0.0, min(1.0, utility)), 4)
+                is_useful = utility >= 0.3
 
             results.append(
                 {
@@ -221,7 +277,7 @@ class UtilityScorer:
                     "novelty": round(novelty, 4),
                     "contradiction": round(contradiction, 4),
                     "utility_score": utility,
-                    "is_useful": utility >= 0.3,
+                    "is_useful": is_useful,
                 }
             )
         return results
