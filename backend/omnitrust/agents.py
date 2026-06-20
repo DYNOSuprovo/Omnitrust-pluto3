@@ -135,6 +135,40 @@ class BaseAgent:
                 if attempt <= MAX_LLM_RETRIES:
                     time.sleep(LLM_RETRY_DELAY_SECONDS)
 
+        # Fallback to GROQ_FAST_MODEL if reasoning model fails (e.g. on 429 rate limit)
+        if self.model_id == GROQ_REASONING_MODEL and GROQ_FAST_MODEL != GROQ_REASONING_MODEL:
+            logger.warning(
+                "[%s] Reasoning model %s failed (possibly due to rate limits). "
+                "Attempting fallback to fast model: %s",
+                self.role,
+                self.model_id,
+                GROQ_FAST_MODEL,
+            )
+            try:
+                t0 = time.perf_counter()
+                response = self._client.chat.completions.create(
+                    model=GROQ_FAST_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=4096,
+                )
+                elapsed = time.perf_counter() - t0
+                text = response.choices[0].message.content or ""
+                logger.info(
+                    "[%s] Groq fallback %s responded in %.2fs (%d chars)",
+                    self.role,
+                    GROQ_FAST_MODEL,
+                    elapsed,
+                    len(text),
+                )
+                return text
+            except Exception as fallback_exc:
+                logger.exception("[%s] Fallback to fast model failed", self.role)
+                raise RuntimeError(
+                    f"[{self.role}] All API attempts on {self.model_id} failed. "
+                    f"Fallback to {GROQ_FAST_MODEL} also failed. Last error: {fallback_exc}"
+                ) from fallback_exc
+
         raise RuntimeError(
             f"[{self.role}] All {MAX_LLM_RETRIES + 1} Groq API attempts failed. "
             f"Last error: {last_error}"
@@ -253,8 +287,8 @@ class CriticAgent(BaseAgent):
     ) -> list[dict[str, Any]]:
         # Keep total context small to avoid hitting Groq's low TPM limit (6000 TPM on free tier)
         evidence_block = "\n\n".join(
-            f"[DOC {e.get('id', idx)}] {e.get('title', '')}\n{e.get('text', '')[:800]}"
-            for idx, e in enumerate(evidence[:4])
+            f"[DOC {e.get('id', idx)}] {e.get('title', '')}\n{e.get('text', '')[:500]}"
+            for idx, e in enumerate(evidence[:3])
         )
 
         system = (
@@ -334,8 +368,8 @@ class SynthesizerAgent(BaseAgent):
         bus: MessageBus,
     ) -> str:
         evidence_block = "\n\n".join(
-            f"[DOC {e.get('id', idx)}] {e.get('title', '')}\n{e.get('text', '')[:1000]}"
-            for idx, e in enumerate(evidence[:5])
+            f"[DOC {e.get('id', idx)}] {e.get('title', '')}\n{e.get('text', '')[:600]}"
+            for idx, e in enumerate(evidence[:3])
         )
         claims_block = "\n".join(
             f"- [{c.get('status', 'uncertain').upper()}] {c.get('claim', '')}"

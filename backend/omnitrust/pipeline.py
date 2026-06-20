@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-def _extract_claims(text: str, max_claims: int = 12) -> list[str]:
+def _extract_claims(text: str, max_claims: int = 8) -> list[str]:
     """Split text into sentence-level claims for verification."""
     sentences = _SENTENCE_RE.split(text.strip())
     claims: list[str] = []
@@ -202,7 +202,7 @@ class OmniTrustPipeline:
         t0 = time.perf_counter()
         evidence_for_critic = [
             {"id": d.get("id", ""), "title": d.get("title", ""), "text": d.get("text", "")}
-            for d in filtered_docs[:8]
+            for d in filtered_docs[:4]
         ]
         checked_raw = self.critic.check_claims(preliminary_claims, evidence_for_critic, self.bus)
         checked_claims = [
