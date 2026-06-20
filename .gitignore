@@ -1,0 +1,71 @@
+# Python - bytecode and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.eslintcache
+.stylelintcache
+*.local
+.npm
+.yarn-integrity
+frontend/.svelte-kit/
+frontend/.next/
+frontend/out/
+
+# IDE / Editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.classpath
+.settings/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+backend/eval_report.json
+
+# Environment / Credentials
+.env
+.env*.local
+*.key
+*.pem
+*.token
+credentials.json
+secrets/
+
+# Agent Sandbox outputs & Search outputs
+search_results.txt
+search_results_all.txt
+transcript_matches.txt
